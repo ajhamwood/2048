@@ -1,0 +1,351 @@
+<!doctype html>
+<html>
+<head>
+  <title>2048</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="keywords" content="2048, puzzle, game">
+  <meta name="description" content="Classic puzzle game 2048">
+  <link rel="shortcut icon" href="data:image/png;base64,">
+  <style>
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden
+}
+#menu {
+  position: absolute;
+  background: lightgrey;
+  width: 0.9rem;
+  height: 1.9rem;
+  padding: .3rem .8rem;
+  overflow: hidden;
+  border-bottom-right-radius: 1.5rem;
+  border-width: 0 medium medium 0;
+  border-style: solid;
+  border-color: grey;
+  transition: width .4s ease, height .4s ease
+}
+#menu > * {
+  opacity: 0;
+  transition: opacity .8s ease-out
+}
+#menu:hover { /* resizeMenu() */ }
+#menu:hover > * {
+  opacity: 1
+}
+#score::before {
+  content: "Score:\a0"
+}
+#highscore::before {
+  content: "Highscore:\a0"
+}
+#restart {
+  border: 1px solid grey;
+  padding: .2rem;
+  margin-top: .5rem;
+  border-radius: .2rem;
+  background: darkgrey;
+  text-align: center;
+  width: 5rem;
+  cursor: pointer
+}
+#restart:active {
+  background: white
+}
+#dimensions {
+  margin-top: .2rem;
+  line-height: 1.5rem
+}
+#dimensions::before {
+  content: "Dimensions:\a0"
+}
+#dimensions > input[type=radio] {
+  display: none
+}
+#dimensions > input[type=radio]:checked + label {
+  background: grey
+}
+#dimensions > label {
+  padding: .1rem .5rem;
+  margin: 0 .1rem;
+  border-radius: .4rem;
+  cursor: pointer
+}
+#restart {
+  border: 1px solid grey;
+  padding: .2rem;
+  margin-top: .5rem;
+  border-radius: .2rem;
+  background: darkgrey;
+  text-align: center;
+  width: 5rem;
+  cursor: pointer
+}
+#restart:active {
+  background: white
+}
+#content {
+  display: grid;
+  grid-gap: 3vmin;
+  height: 100%;
+  width: 100vh;
+  margin: 0 auto
+}
+.sp3 {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+.sp4 {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+}
+.sp5 {
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+}
+.cell {
+  background: lightgrey;
+  text-align: center;
+  overflow: hidden
+}
+@media screen and (max-aspect-ratio: 1/1) {
+  #content {
+    margin-top: calc(50vh - 50vw);
+    height: 100vw;
+    width: 100%;
+  }
+}
+  </style>
+</head>
+<body>
+  <div id="menu">
+    <div id="score">0</div>
+    <div id="highscore">0</div>
+    <div id="dimensions">
+      <input id="sq3" name="dims" type="radio" /
+      ><label for="sq3">3</label
+      ><input id="sq4" name="dims" type="radio" /
+      ><label for="sq4">4</label
+      ><input id="sq5" name="dims" type="radio" /
+      ><label for="sq5">5</label>
+    </div>
+    <div id="restart">Restart</div>
+  </div>
+  <div id="content"></div>
+  <template id="cell">
+    <div class="cell">
+      <span class="value"></span>
+    </div>
+  </template>
+  <script>
+
+// Utils
+function $ (sel, node) { return Array.prototype.slice.call( (node || document).querySelectorAll(sel) ) }
+
+$.addEvents = function (obj, node) {
+  for (var q in obj) for (var e in obj[q])
+    for (var ns = q ? $(q, node) : [window, document], es = e.split(" "), i = 0; i < es.length; i++)
+      typeof ns === "undefined" || ns.forEach(n => n.addEventListener(es[i], obj[q][e].bind(n)))
+};
+
+$.load = function (id, node) { (node || document.body).appendChild(document.importNode($("#" + id)[0].content, true)) };
+
+
+function Drum () {
+  return new Promise(resolve => {
+    var req = indexedDB.open("2048", 1);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore("scoreStore", {autoIncrement: true});
+      e.target.result.createObjectStore("boardStore", {autoIncrement: true})
+    };
+    req.onsuccess = e => { this._db = e.target.result; resolve(this) }
+  })
+}
+
+Drum.prototype = {
+  getScore: function (ix) {
+    var store = this._db.transaction(["scoreStore"], "readwrite").objectStore("scoreStore");
+    return new Promise(resolve => store.get(ix).onsuccess = e => resolve(e.target.result))
+  },
+  setScore: function (ix, content) {
+    var store = this._db.transaction(["scoreStore"], "readwrite").objectStore("scoreStore");
+    return new Promise(resolve => resolve(store.put(content, ix)))
+  },
+  getBoard: function () {
+    var store = this._db.transaction(["boardStore"], "readwrite").objectStore("boardStore");
+    return new Promise(resolve => store.get(0).onsuccess = e => resolve(e.target.result))
+  },
+  setBoard: function (content) {
+    var store = this._db.transaction(["boardStore"], "readwrite").objectStore("boardStore");
+    return new Promise(resolve => resolve(store.put(content, 0)))
+  },
+  purge: function () {
+    this._db.close();
+    return new Promise(resolve => indexedDB.deleteDatabase("2048").onsuccess = resolve)
+  },
+  constructor: Drum
+};
+
+Drum.init = function () { return new Drum().then(d => window.drum = d) };
+
+// Init
+var state, score, highscore, dims;
+
+function changeDim (d) {
+  state = new Array(d).fill(0).map(() => new Array(d).fill(0));
+  while ($("#content > *").length) $("#content > :last-child")[0].remove();
+  $("#content")[0].classList.remove("sp3", "sp4", "sp5");
+  $("#content")[0].classList.add("sp" + d);
+  for (var i = 0; i < d; i++) for (var j = 0; j < d; j++) {
+    $.load("cell", $("#content")[0]);
+    $("#content > :last-child")[0].setAttribute("id", "cell" + i + j);
+    $("#content > :last-child > span")[0].style.fontSize = 64 / d + "vmin";
+    $("#content > :last-child > span")[0].style.lineHeight = 100 / d - 2 + "vmin"
+  };
+  return drum.getScore(d)
+    .then(val => $("#highscore")[0].innerText = highscore = val || 0)
+    .then(initBoard)
+    .then(resizeMenu)
+}
+
+function initBoard () {
+  state = state.map(a => a.map(() => 0));
+  for (var cell, i = 0; i < dims; i++) for (j = 0; j < dims; j++) {
+    (cell = $("#cell" + i + j + " > span")[0]).innerText = "";
+    cell.style.fontSize = 64 / dims + "vmin";
+    cell.parentNode.style.background = "lightgrey"
+  }
+  score = 0;
+  $("#score")[0].innerText = 0;
+  addTile();
+  addTile()
+}
+
+function updateBoard () {
+  drum.setBoard(state.toString());
+  for (var i = 0; i < dims; i++) for (var j = 0; j < dims; j++) {
+    var cell = $("#cell" + i + j + " > span")[0];
+    cell.innerText = state[i][j] || "";
+    cell.style.fontSize = 128 / dims / Math.max(2, state[i][j].toString().length) + "vmin";
+    var tileColour = Math.floor(255 * Math.log2(state[i][j]) / dims ** 2);
+    $("#cell" + i + j)[0].style.background = state[i][j] ? `rgb(${255 - tileColour}, 0, ${tileColour})` : "lightgrey"
+  }
+}
+
+function addTile () {
+  var x, y;
+  while ( state[x = Math.floor(Math.random() * dims)][y = Math.floor(Math.random() * dims)] );
+  $("#cell" + x + y + " > span")[0].innerText = state[x][y] = Math.floor(Math.random() * 10 / 9) ? 4 : 2;
+  var step = Math.floor(255 * Math.log2(state[x][y]) / dims ** 2);
+  $("#cell" + x + y)[0].style.background = `rgb(${255 - step}, 0, ${step})`
+}
+
+function resizeMenu () {
+  if ($("#menu:hover").length) return;
+  document.styleSheets[0].cssRules[3].style.width = $("#menu")[0].scrollWidth + "px";
+  document.styleSheets[0].cssRules[3].style.height = $("#menu")[0].scrollHeight + "px"
+}
+
+// Events
+$.addEvents({
+
+  "": {
+
+    load: function () {
+      Drum.init()
+        .then(drum => drum.getScore(0))
+        .then(val => {
+          dims = val || 4;
+          $(`#sq${dims}`)[0].checked = "checked";
+          return changeDim(dims).then(() => drum.getBoard())
+        })
+        .then(board => {
+          if (!board) return;
+          let flat = board.split(",");
+          for (var i = 0; i < dims; i++) state[i] = flat.splice(0, dims).map(a => parseInt(a));
+          updateBoard()
+        })
+    },
+
+    // Make a move
+    keydown: function (e) {
+      e.stopPropagation();
+      var post = new Array(dims), i, j, k, flag = false, dir = false;
+      function combine (a, v) {
+        if (!v) return a;
+        if (k == v) {
+          a[a.length - 1] = 2 * v;
+          k = 0;
+          $("#score")[0].innerText = score += 2 * v;
+        } else a.push(k = v);
+        return a
+      }
+
+      switch (e.key) {
+        case "ArrowLeft":
+        dir = true;
+
+        case "ArrowRight":
+        for (i = 0; i < dims; k = 0, i++) {
+          var comb = dir ?
+            state[i].reduce(combine, []) :
+            state[i].slice().reverse().reduce(combine, []).reverse();
+          post[i] = comb.reduce((a, v, i) => { a[dir ? i : dims - comb.length + i] = v; return a }, new Array(dims).fill(0))
+        }
+        break;
+
+        case "ArrowUp":
+        dir = true;
+
+        case "ArrowDown":
+        let inter = new Array(dims);
+        for (i = 0; i < dims; k = 0, i++) {
+          var comb = dir ?
+            state.map(a => a[i]).reduce(combine, []) :
+            state.map(a => a[i]).reverse().reduce(combine, []).reverse();
+          inter[i] = comb.reduce((a, v, i) => { a[dir ? i : dims - comb.length + i] = v; return a }, new Array(dims).fill(0))
+        }
+        inter.forEach((_, i) => post[i] = inter.map((_, j) => inter[j][i]));
+        break;
+
+        default: return
+      }
+
+      for (i = 0; i < dims; i++) for (j = 0; j < dims; j++) if (post[i][j] != state[i][j]) flag = true;
+
+      if (flag) {
+        state = post;
+        updateBoard();
+        resizeMenu();
+        addTile();
+        drum.setBoard(state.toString())
+      } else {
+        for (i = 0; i < dims; i++) for (j = 0; j < dims; j++) {
+          flag = flag || (j < dims - 1 && state[i][j] == state[i][j+1]) || (i < dims - 1 && state[i][j] == state[i+1][j])
+        }
+        if (!flag) {
+          drum.setScore(dims, $("#highscore")[0].innerText = highscore = Math.max(highscore, score));
+          drum.setBoard();
+          resizeMenu()
+        }
+      }
+
+    }
+
+  },
+
+  "#restart": { click: initBoard },
+
+  "#dimensions > input[type=radio]": {
+    change: function () {
+      changeDim(dims = parseInt(this.id.slice(-1)));
+      drum.setScore(0, dims)
+    }
+  }
+
+})
+
+  </script>
+</body>
+</html>
