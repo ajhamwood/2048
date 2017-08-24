@@ -202,11 +202,7 @@ function changeDim (d) {
     $("#content > :last-child")[0].setAttribute("id", "cell" + i + j);
     $("#content > :last-child > span")[0].style.fontSize = 64 / d + "vmin";
     $("#content > :last-child > span")[0].style.lineHeight = 100 / d - 2 + "vmin"
-  };
-  return drum.getScore(d)
-    .then(val => $("#highscore")[0].innerText = highscore = val || 0)
-    .then(initBoard)
-    .then(resizeMenu)
+  }
 }
 
 function initBoard () {
@@ -216,7 +212,8 @@ function initBoard () {
     cell.style.fontSize = 64 / dims + "vmin";
     cell.parentNode.style.background = "lightgrey"
   }
-  score = 0;
+  drum.setScore(1, score = 0);
+  drum.setBoard();
   $("#score")[0].innerText = 0;
   addTile();
   addTile()
@@ -258,10 +255,15 @@ $.addEvents({
         .then(val => {
           dims = val || 4;
           $(`#sq${dims}`)[0].checked = "checked";
-          return changeDim(dims).then(() => drum.getBoard())
+          return drum.getScore(1)
+        }).then(val => {
+          $("#score")[0].innerText = score = val;
+          changeDim(dims);
+          resizeMenu();
+          return drum.getBoard()
         })
         .then(board => {
-          if (!board) return;
+          if (!board) return initBoard();
           let flat = board.split(",");
           for (var i = 0; i < dims; i++) state[i] = flat.splice(0, dims).map(a => parseInt(a));
           updateBoard()
@@ -319,6 +321,7 @@ $.addEvents({
         updateBoard();
         resizeMenu();
         addTile();
+        drum.setScore(1, score);
         drum.setBoard(state.toString())
       } else {
         for (i = 0; i < dims; i++) for (j = 0; j < dims; j++) {
@@ -326,6 +329,7 @@ $.addEvents({
         }
         if (!flag) {
           drum.setScore(dims, $("#highscore")[0].innerText = highscore = Math.max(highscore, score));
+          drum.setScore(1, score = 0)
           drum.setBoard();
           resizeMenu()
         }
@@ -340,7 +344,11 @@ $.addEvents({
   "#dimensions > input[type=radio]": {
     change: function () {
       changeDim(dims = parseInt(this.id.slice(-1)));
-      drum.setScore(0, dims)
+      drum.setScore(0, dims);
+      drum.getScore(dims)
+        .then(val => $("#highscore")[0].innerText = highscore = val || 0)
+        .then(initBoard)
+        .then(resizeMenu)
     }
   }
 
